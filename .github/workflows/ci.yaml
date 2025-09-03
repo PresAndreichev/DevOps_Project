@@ -27,14 +27,14 @@ jobs:
       - name: Install pylint
         run: |
           pip install pylint
-          
+
       - name: Lint check
         run: |
-          pylint app.py app_test.py
+          pylint src/app.py src/app_test.py
 
       - name: Format check
         run: |
-          black --check app.py app_test.py
+          black --check src/app.py src/app_test.py
 
       - name: Run Unit tests
         run: |
