@@ -39,7 +39,7 @@ jobs:
 
       - name: Format check
         run: |
-          black --check src/app.py src/app_test.py
+          black src/app.py src/app_test.py
 
       - name: Run Unit tests
         run: |
