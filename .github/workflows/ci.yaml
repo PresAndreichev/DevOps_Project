@@ -28,9 +28,21 @@ jobs:
         run: |
           pip install pylint
 
-      - name: Lint check
+      - name: Run Lint check
+        id: lint
         run: |
-          pylint src/app.py src/app_test.py
+          pylint src/app.py src/app_test.py --output-format=text > pylint_output.txt
+          
+          score=$(tail -n 1 pylint_output.txt | awk '{print $1}')
+          
+          echo "Pylint Score: $score"
+          
+          if (( $(echo "$score < 5" | bc -l) )); then
+            echo "Pylint score is below 5, failing the job"
+            exit 1
+          else
+            echo "Pylint score is $score, passing the job"
+          fi
 
       - name: Format check
         run: |
