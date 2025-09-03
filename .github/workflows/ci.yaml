@@ -28,6 +28,10 @@ jobs:
         run: |
           pip install pylint
 
+      - name: Install black
+              run: |
+                pip install black
+                
       - name: Run Lint check
         id: lint
         run: |
