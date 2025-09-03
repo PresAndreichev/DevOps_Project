@@ -24,6 +24,10 @@ jobs:
         run: |
           pip install -r requirements.txt
 
+      - name: Install pylint
+        run: |
+          pip install pylint
+          
       - name: Lint check
         run: |
           pylint app.py app_test.py
