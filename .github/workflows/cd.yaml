@@ -32,10 +32,8 @@ jobs:
 
       - name: Set up Docker CLI
         run: |
-          sudo apt-get update
-          sudo apt-get install -y docker.io
-          sudo usermod -aG docker $USER
-          sudo systemctl start docker
+          curl -fsSL https://get.docker.com -o get-docker.sh
+          sudo sh get-docker.sh
           docker --version
 
       - name: Login to Docker Hub
@@ -168,10 +166,8 @@ jobs:
 
       - name: Health check
         run: |
-          # Simple health check - adjust based on your application
           SERVICE_IP=$(kubectl get service myapp-service -o jsonpath='{.status.loadBalancer.ingress[0].ip}' || echo "")
           if [ ! -z "$SERVICE_IP" ]; then
-            echo "Testing service endpoint: $SERVICE_IP"
             curl -I --connect-timeout 5 http://$SERVICE_IP:3000 || echo "Health check failed - service might still be starting"
           else
             echo "Service IP not available yet"
