@@ -22,12 +22,18 @@ jobs:
           echo "CI Status: ${{ github.event.workflow_run.conclusion }}"
           echo "Commit SHA: ${{ github.event.workflow_run.head_sha }}"
 
-      - name: Set up Kubernetes CLI
+      - name: Set up kind cluster
+        uses: helm/kind-action@v1.7.0
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'latest'
+
+      - name: Verify Kubernetes cluster is up
         run: |
-          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-          chmod +x ./kubectl
-          sudo mv ./kubectl /usr/local/bin/kubectl
-          kubectl version --client
+          kubectl cluster-info
+          kubectl get nodes
 
       - name: Set up Docker CLI
         run: |
@@ -45,25 +51,26 @@ jobs:
         run: |
           IMAGE_TAG="${{ secrets.DOCKER_USERNAME }}/myapp:${{ github.event.workflow_run.head_sha }}"
           echo "Pulling image: $IMAGE_TAG"
-          docker pull $IMAGE_TAG
-          docker images | grep "${{ secrets.DOCKER_USERNAME }}/myapp"
+          kind load docker-image $IMAGE_TAG
 
       - name: Deploy to Kubernetes
         run: |
-          echo "Deploying to Kubernetes..."
+          echo "Deploying to kind cluster..."
           if [ -d "k8" ]; then
             kubectl apply -f k8/
-            echo "Deployment completed successfully"
+            echo "Deployment applied."
           else
-            echo "Warning: k8 directory not found"
+            echo "ERROR: k8 directory not found"
+            exit 1
           fi
 
       - name: Verify Kubernetes deployment
         run: |
-          echo "Waiting for deployment to be ready..."
-          sleep 15
-          kubectl get pods,services,deployments
-
+          echo "Waiting for pods to start..."
+          sleep 20
+          kubectl get pods -A
+          kubectl get svc -A
+          
       - name: Install MySQL client for testing
         run: |
           sudo apt-get update

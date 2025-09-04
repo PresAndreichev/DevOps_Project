@@ -16,6 +16,6 @@ spec:
     spec:
       containers:
         - name: myapp
-          image: ${{ secrets.DOCKER_USERNAME }}/myapp:${{ github.sha }}  # Uses the CI-built image
+          image: ${{ secrets.DOCKER_USERNAME }}/myapp:${{ github.sha }}
           ports:
             - containerPort: 5000
