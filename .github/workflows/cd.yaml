@@ -48,6 +48,22 @@ jobs:
           docker pull $IMAGE_TAG
           docker images | grep "${{ secrets.DOCKER_USERNAME }}/myapp"
 
+      - name: Deploy to Kubernetes
+        run: |
+          echo "Deploying to Kubernetes..."
+          if [ -d "k8" ]; then
+            kubectl apply -f k8/
+            echo "Deployment completed successfully"
+          else
+            echo "Warning: k8 directory not found"
+          fi
+
+      - name: Verify Kubernetes deployment
+        run: |
+          echo "Waiting for deployment to be ready..."
+          sleep 15
+          kubectl get pods,services,deployments
+
       - name: Install MySQL client for testing
         run: |
           sudo apt-get update
@@ -114,19 +130,3 @@ jobs:
           (echo "Flyway migration failed or timed out"; exit 1)
           
           echo "Migration completed successfully"
-
-      - name: Deploy to Kubernetes
-        run: |
-          echo "Deploying to Kubernetes..."
-          if [ -d "k8" ]; then
-            kubectl apply -f k8/
-            echo "Deployment completed successfully"
-          else
-            echo "Warning: k8 directory not found"
-          fi
-
-      - name: Verify Kubernetes deployment
-        run: |
-          echo "Waiting for deployment to be ready..."
-          sleep 15
-          kubectl get pods,services,deployments
