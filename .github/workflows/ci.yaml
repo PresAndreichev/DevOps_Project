@@ -81,7 +81,7 @@ jobs:
           exit-code: '1'
 
       - name: SonarCloud Setup
-        uses: SonarSource/sonarcloud-action@v1
+        uses: SonarSource/sonarcloud-github-action@master
         with:
           organization: ${{ secrets.SONAR_ORG }}
           token: ${{ secrets.SONAR_TOKEN }}
