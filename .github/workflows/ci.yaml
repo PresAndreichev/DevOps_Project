@@ -108,6 +108,11 @@ jobs:
 
       - name: Push Docker image to Docker Hub
         run: |
-          echo "Source image: ${{ needs.build_and_test.outputs.image-tag }}"
-          docker tag ${{ needs.build_and_test.outputs.image-tag }} ${{ secrets.DOCKER_USERNAME }}/myapp:${{ github.sha }}
-          docker push ${{ secrets.DOCKER_USERNAME }}/myapp:${{ github.sha }}
+          IMAGE_NAME=${{ secrets.DOCKER_USERNAME }}/myapp
+          IMAGE_TAG=latest  # <-- Change this to your desired tag (e.g., v1.0.0, prod, etc.)
+
+          echo "Tagging image built in previous job: ${{ needs.build_and_test.outputs.image-tag }}"
+          docker tag ${{ needs.build_and_test.outputs.image-tag }} $IMAGE_NAME:$IMAGE_TAG
+
+          echo "Pushing tagged image to Docker Hub: $IMAGE_NAME:$IMAGE_TAG"
+          docker push $IMAGE_NAME:$IMAGE_TAG
