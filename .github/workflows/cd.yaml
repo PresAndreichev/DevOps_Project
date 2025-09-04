@@ -17,6 +17,12 @@ jobs:
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
 
+      - name: Display CI workflow information
+        run: |
+          echo "CI Workflow: ${{ github.event.workflow_run.name }}"
+          echo "CI Status: ${{ github.event.workflow_run.conclusion }}"
+          echo "Commit SHA: ${{ github.event.workflow_run.head_sha }}"
+
       - name: Set up Docker
         uses: docker/setup-buildx-action@v3
 
@@ -36,19 +42,131 @@ jobs:
           kubectl cluster-info
           kubectl get nodes
 
-      - name: Deploy MySQL to Kubernetes
+      - name: Create MySQL Secret from GitHub Secrets
         run: |
-          if [ -f "k8/mysql-deployment.yaml" ]; then
-            kubectl apply -f k8/mysql-deployment.yaml
-            echo "MySQL deployment applied."
-          else
-            echo "MySQL deployment file not found, skipping"
-          fi
+          # Create Kubernetes Secret using GitHub Secrets
+          kubectl create secret generic mysql-secret \
+            --from-literal=root-password="${{ secrets.MYSQL_ROOT_PASSWORD }}" \
+            --from-literal=database-password="${{ secrets.MYSQL_DATABASE_PASSWORD }}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+          echo "MySQL secret created successfully"
+
+      - name: Create MySQL ConfigMap
+        run: |
+          kubectl apply -f - <<'EOF'
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mysql-config
+data:
+  database: "myapp"
+  user: "myuser"
+EOF
+
+      - name: Deploy MySQL
+        run: |
+          kubectl apply -f - <<'EOF'
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mysql
+spec:
+  selector:
+    matchLabels:
+      app: mysql
+  template:
+    metadata:
+      labels:
+        app: mysql
+    spec:
+      containers:
+      - name: mysql
+        image: mysql:8.0.33
+        env:
+        - name: MYSQL_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mysql-secret
+              key: root-password
+        - name: MYSQL_DATABASE
+          valueFrom:
+            configMapKeyRef:
+              name: mysql-config
+              key: database
+        - name: MYSQL_USER
+          valueFrom:
+            configMapKeyRef:
+              name: mysql-config
+              key: user
+        - name: MYSQL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mysql-secret
+              key: database-password
+        ports:
+        - containerPort: 3306
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+        volumeMounts:
+        - name: mysql-storage
+          mountPath: /var/lib/mysql
+        readinessProbe:
+          tcpSocket:
+            port: 3306
+          initialDelaySeconds: 15
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 5
+        livenessProbe:
+          tcpSocket:
+            port: 3306
+          initialDelaySeconds: 30
+          periodSeconds: 10
+      volumes:
+      - name: mysql-storage
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql-service
+spec:
+  selector:
+    app: mysql
+  ports:
+  - port: 3306
+    targetPort: 3306
+EOF
 
       - name: Wait for MySQL to be ready
         run: |
           echo "Waiting for MySQL pod to be ready..."
-          kubectl wait --for=condition=ready pod -l app=mysql --timeout=120s
+          
+          # First, wait for the pod to be created and running
+          echo "Waiting for MySQL pod to be created..."
+          for i in {1..30}; do
+            if kubectl get pods -l app=mysql 2>/dev/null | grep -q "mysql"; then
+              echo "MySQL pod found"
+              break
+            fi
+            if [ $i -eq 30 ]; then
+              echo "ERROR: MySQL pod never created"
+              kubectl get all
+              exit 1
+            fi
+            sleep 2
+          done
+          
+          # Wait for pod to be in Running state
+          echo "Waiting for MySQL pod to be running..."
+          kubectl wait --for=jsonpath='{.status.phase}'=Running pod -l app=mysql --timeout=120s
+          
+          # Wait for readiness with longer timeout
+          echo "Waiting for MySQL to become ready..."
+          kubectl wait --for=condition=ready pod -l app=mysql --timeout=180s
+          
           echo "MySQL is ready!"
 
       - name: Login to Docker Hub
@@ -84,49 +202,23 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y mysql-client
 
-      - name: Wait for MySQL to be ready
+      - name: Test database connectivity within cluster
         run: |
-          echo "Waiting for MySQL pod to be ready..."
+          echo "Testing database connectivity to MySQL service in cluster..."
           
-          # First, wait for the pod to be created and running
-          echo "Waiting for MySQL pod to be created..."
-          for i in {1..30}; do
-            if kubectl get pods -l app=mysql 2>/dev/null | grep -q "mysql"; then
-              echo "MySQL pod found"
-              break
-            fi
-            if [ $i -eq 30 ]; then
-              echo "ERROR: MySQL pod never created"
-              kubectl get all
-              exit 1
-            fi
-            sleep 2
-          done
-          
-          # Wait for pod to be in Running state
-          echo "Waiting for MySQL pod to be running..."
-          kubectl wait --for=jsonpath='{.status.phase}'=Running pod -l app=mysql --timeout=120s
-          
-          # Get pod name for debugging
+          # Get the MySQL pod name
           MYSQL_POD=$(kubectl get pods -l app=mysql -o jsonpath='{.items[0].metadata.name}')
-          echo "MySQL pod name: $MYSQL_POD"
           
-          # Check pod status in detail
-          echo "Pod status:"
-          kubectl get pod $MYSQL_POD -o wide
-          echo ""
-          echo "Pod conditions:"
-          kubectl describe pod $MYSQL_POD | grep -A 10 "Conditions:"
-          
-          # Wait for readiness with longer timeout
-          echo "Waiting for MySQL to become ready..."
-          kubectl wait --for=condition=ready pod -l app=mysql --timeout=180s
-          
-          # Additional verification
-          echo "Testing MySQL connection internally..."
-          kubectl exec $MYSQL_POD -- mysql -u root -prootpassword -e "SELECT 1;" || echo "Direct connection test failed"
-          
-          echo "MySQL is ready!"
+          # Test MySQL connection using kubectl exec
+          for i in {1..10}; do
+            if kubectl exec $MYSQL_POD -- mysql -u myuser -p"${{ secrets.MYSQL_DATABASE_PASSWORD }}" -e "SELECT 1;" myapp; then
+              echo "Database connection successful"
+              break
+            else
+              echo "Attempt $i/10: Database not ready yet"
+              sleep 5
+            fi
+          done
 
       - name: Apply database migrations with Flyway (Docker approach)
         env:
@@ -134,17 +226,17 @@ jobs:
           DB_PORT: 3306
           DB_NAME: myapp
           DB_USER: myuser
-          DB_PASSWORD: mypassword
+          DB_PASSWORD: ${{ secrets.MYSQL_DATABASE_PASSWORD }}
         run: |
           echo "Applying database migrations using Docker Flyway..."
           
-          # Create a temporary directory for SQL files
-          mkdir -p /tmp/sql-migrations
-          cp ./sql/*.sql /tmp/sql-migrations/
+          # Verify SQL files exist
+          echo "SQL files to be migrated:"
+          ls -la sql/*.sql
           
-          # Run Flyway migration using Docker
+          # Run Flyway migration using Docker - mount the sql directory directly
           docker run --rm --network=host \
-            -v /tmp/sql-migrations:/flyway/sql \
+            -v $(pwd)/sql:/flyway/sql \
             flyway/flyway:9.22.0 \
             -url="jdbc:mysql://$DB_HOST:$DB_PORT/$DB_NAME?useSSL=false&allowPublicKeyRetrieval=true" \
             -user="$DB_USER" \
