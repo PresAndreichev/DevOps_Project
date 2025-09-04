@@ -1,40 +1,68 @@
 name: CD Pipeline
 
 on:
-  push:
-    branches:
-      - main
+  workflow_run:
+    workflows: ["CI Pipeline"]  # Must match exactly the name of your CI workflow
+    types:
+      - completed
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Display CI workflow information
+        run: |
+          echo "CI Workflow: ${{ github.event.workflow_run.name }}"
+          echo "CI Status: ${{ github.event.workflow_run.conclusion }}"
+          echo "Commit SHA: ${{ github.event.workflow_run.head_sha }}"
+          echo "Commit Message: ${{ github.event.workflow_run.head_commit.message }}"
 
       - name: Set up Kubernetes CLI
         run: |
-          curl -LO https://storage.googleapis.com/kubernetes-release/release/v1.24.0/bin/linux/amd64/kubectl
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
           chmod +x ./kubectl
           sudo mv ./kubectl /usr/local/bin/kubectl
           kubectl version --client
 
       - name: Set up Docker CLI
         run: |
-          curl -fsSL https://get.docker.com -o get-docker.sh
-          sudo sh get-docker.sh
+          sudo apt-get update
+          sudo apt-get install -y docker.io
+          sudo usermod -aG docker $USER
+          sudo systemctl start docker
           docker --version
 
       - name: Login to Docker Hub
-        uses: docker/login-action@v2
+        uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
       - name: Pull Docker image
         run: |
-          docker pull ${{ secrets.DOCKER_USERNAME }}/myapp:${{ github.sha }}
+          IMAGE_TAG="${{ secrets.DOCKER_USERNAME }}/myapp:${{ github.event.workflow_run.head_sha }}"
+          echo "Pulling image: $IMAGE_TAG"
+          
+          # Retry mechanism in case the image push is still completing
+          for i in {1..5}; do
+            if docker pull $IMAGE_TAG; then
+              echo "Successfully pulled image"
+              break
+            else
+              echo "Attempt $i failed. Retrying in 10 seconds..."
+              sleep 10
+            fi
+          done
+          
+          # Verify image was pulled
           docker images | grep "${{ secrets.DOCKER_USERNAME }}/myapp"
+          docker inspect $IMAGE_TAG || echo "Image inspection failed"
 
       - name: Set up Flyway
         run: |
@@ -47,14 +75,14 @@ jobs:
       - name: Verify SQL migration files
         run: |
           echo "Checking SQL migration directory structure:"
-          ls -la ./sql/ || echo "SQL directory not found - please check your repository structure"
-          
           if [ -d "./sql" ]; then
-            echo "SQL files found:"
+            echo "SQL directory found"
+            echo "SQL files:"
             ls -la ./sql/*.sql || echo "No SQL files found in sql directory"
           else
             echo "ERROR: sql directory not found!"
-            echo "Please make sure you have a 'sql' directory with your migration files"
+            echo "Current directory contents:"
+            ls -la
             exit 1
           fi
 
@@ -66,28 +94,33 @@ jobs:
           DB_USER: ${{ secrets.DB_USER }}
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
         run: |
-          # Use flyway.conf from repository if it exists, otherwise use environment variables
+          echo "Applying database migrations..."
+          
+          # Check if flyway.conf exists and use it, otherwise use environment variables
           if [ -f "flyway.conf" ]; then
             echo "Using flyway.conf from repository"
-            flyway -configFiles=flyway.conf migrate
+            # Create a temporary config file with resolved secrets
+            cat flyway.conf | envsubst > flyway_resolved.conf
+            flyway -configFiles=flyway_resolved.conf migrate
           else
             echo "Using environment variables for Flyway configuration"
             flyway \
-              -url="jdbc:mysql://${DB_HOST}:${DB_PORT}/${DB_NAME}" \
+              -url="jdbc:mysql://${DB_HOST}:${DB_PORT}/${DB_NAME}?useSSL=false&allowPublicKeyRetrieval=true" \
               -user="${DB_USER}" \
               -password="${DB_PASSWORD}" \
               -locations="filesystem:./sql" \
               -schemas="${DB_NAME}" \
+              -cleanDisabled="true" \
               migrate
           fi
           
           # Verify migration was successful
           echo "Migration completed. Current status:"
           if [ -f "flyway.conf" ]; then
-            flyway -configFiles=flyway.conf info
+            flyway -configFiles=flyway_resolved.conf info
           else
             flyway \
-              -url="jdbc:mysql://${DB_HOST}:${DB_PORT}/${DB_NAME}" \
+              -url="jdbc:mysql://${DB_HOST}:${DB_PORT}/${DB_NAME}?useSSL=false&allowPublicKeyRetrieval=true" \
               -user="${DB_USER}" \
               -password="${DB_PASSWORD}" \
               -locations="filesystem:./sql" \
@@ -98,16 +131,48 @@ jobs:
         run: |
           echo "Deploying to Kubernetes..."
           if [ -d "k8" ]; then
+            # Update image tag in Kubernetes manifests if needed
+            if [ -f "k8/deployment.yaml" ]; then
+              echo "Updating image tag in deployment to: ${{ github.event.workflow_run.head_sha }}"
+              sed -i "s|image:.*|image: ${{ secrets.DOCKER_USERNAME }}/myapp:${{ github.event.workflow_run.head_sha }}|" k8/deployment.yaml
+            fi
+            
             kubectl apply -f k8/
             echo "Deployment completed successfully"
           else
             echo "Warning: k8 directory not found, skipping Kubernetes deployment"
+            echo "Current directory contents:"
+            ls -la
           fi
 
-      - name: Verify deployment
+      - name: Verify Kubernetes deployment
         run: |
-          # Wait a moment for pods to start
+          echo "Waiting for deployment to be ready..."
           sleep 10
+          
+          # Check deployment status
           kubectl get pods -o wide
           kubectl get services -o wide
           kubectl get deployments -o wide
+          
+          # Wait for pods to be ready
+          timeout 60s kubectl wait --for=condition=available deployment/myapp --timeout=60s || \
+            echo "Deployment might still be starting"
+          
+          # Show pod logs for verification
+          POD_NAME=$(kubectl get pods -l app=myapp -o jsonpath='{.items[0].metadata.name}')
+          if [ ! -z "$POD_NAME" ]; then
+            echo "Pod logs:"
+            kubectl logs $POD_NAME --tail=20
+          fi
+
+      - name: Health check
+        run: |
+          # Simple health check - adjust based on your application
+          SERVICE_IP=$(kubectl get service myapp-service -o jsonpath='{.status.loadBalancer.ingress[0].ip}' || echo "")
+          if [ ! -z "$SERVICE_IP" ]; then
+            echo "Testing service endpoint: $SERVICE_IP"
+            curl -I --connect-timeout 5 http://$SERVICE_IP:3000 || echo "Health check failed - service might still be starting"
+          else
+            echo "Service IP not available yet"
+          fi
