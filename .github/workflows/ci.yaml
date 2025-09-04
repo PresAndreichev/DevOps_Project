@@ -76,10 +76,17 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y wget
-          wget -qO- https://github.com/aquasecurity/trivy/releases/latest/download/trivy_Linux-64bit.tar.gz | tar zx
+          wget -q https://github.com/aquasecurity/trivy/releases/latest/download/trivy_Linux-64bit.tar.gz -O trivy_Linux-64bit.tar.gz
+          if [ $? -eq 0 ]; then
+            echo "Download completed successfully."
+          else
+            echo "Download failed." && exit 1
+          fi
+          tar -zxvf trivy_Linux-64bit.tar.gz
           sudo mv trivy /usr/local/bin/
+          rm trivy_Linux-64bit.tar.gz
 
-      - name: Run snyk test
+      - name: Run Trivy scan
         run: |
           trivy fs --exit-code 1 --severity HIGH,CRITICAL .
 
