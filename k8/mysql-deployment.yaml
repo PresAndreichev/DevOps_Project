@@ -4,9 +4,8 @@ metadata:
   name: mysql-secret
 type: Opaque
 data:
-  # Encode your passwords in base64
-  root-password: cm9vdHBhc3N3b3Jk # echo -n "rootpassword" | base64
-  database-password: bXlwYXNzd29yZA== # echo -n "mypassword" | base64
+  root-password: cm9vdHBhc3N3b3Jk
+  database-password: bXlwYXNzd29yZA==
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -15,6 +14,22 @@ metadata:
 data:
   database: "myapp"
   user: "myuser"
+  init-script: |
+    CREATE DATABASE IF NOT EXISTS myapp;
+    CREATE USER IF NOT EXISTS 'myuser'@'%' IDENTIFIED BY 'mypassword';
+    GRANT ALL PRIVILEGES ON myapp.* TO 'myuser'@'%';
+    FLUSH PRIVILEGES;
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mysql-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -29,6 +44,10 @@ spec:
       labels:
         app: mysql
     spec:
+      initContainers:
+      - name: init-mysql
+        image: busybox
+        command: ['sh', '-c', 'echo "Waiting for MySQL to start..."; sleep 30']
       containers:
       - name: mysql
         image: mysql:8.0
@@ -53,20 +72,54 @@ spec:
             secretKeyRef:
               name: mysql-secret
               key: database-password
+        - name: MYSQL_INIT_SCRIPT
+          valueFrom:
+            configMapKeyRef:
+              name: mysql-config
+              key: init-script
         ports:
         - containerPort: 3306
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
         volumeMounts:
         - name: mysql-storage
           mountPath: /var/lib/mysql
+        - name: init-script
+          mountPath: /docker-entrypoint-initdb.d
         readinessProbe:
           exec:
-            command: ["mysqladmin", "ping", "-h", "localhost"]
-          initialDelaySeconds: 30
+            command:
+            - sh
+            - -c
+            - "mysqladmin ping -u root -p${MYSQL_ROOT_PASSWORD} && mysql -u root -p${MYSQL_ROOT_PASSWORD} -e 'SELECT 1'"
+          initialDelaySeconds: 45
           periodSeconds: 10
           timeoutSeconds: 5
+          failureThreshold: 5
+        livenessProbe:
+          exec:
+            command:
+            - sh
+            - -c
+            - "mysqladmin ping -u root -p${MYSQL_ROOT_PASSWORD}"
+          initialDelaySeconds: 60
+          periodSeconds: 20
+          timeoutSeconds: 10
       volumes:
       - name: mysql-storage
-        emptyDir: {}
+        persistentVolumeClaim:
+          claimName: mysql-pvc
+      - name: init-script
+        configMap:
+          name: mysql-config
+          items:
+          - key: init-script
+            path: init.sql
 ---
 apiVersion: v1
 kind: Service
@@ -78,4 +131,3 @@ spec:
   ports:
   - port: 3306
     targetPort: 3306
-  clusterIP: None # This creates a Headless Service

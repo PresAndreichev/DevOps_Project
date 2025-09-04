@@ -84,23 +84,35 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y mysql-client
 
-      - name: Test database connectivity within cluster
+      - name: Wait for MySQL to be ready
         run: |
-          echo "Testing database connectivity to MySQL service in cluster..."
+          echo "Waiting for MySQL pod to be ready..."
           
-          # Get the MySQL pod name
-          MYSQL_POD=$(kubectl get pods -l app=mysql -o jsonpath='{.items[0].metadata.name}')
-          
-          # Test MySQL connection using kubectl exec
-          for i in {1..10}; do
-            if kubectl exec $MYSQL_POD -- mysql -h localhost -u myuser -pmypassword -e "SELECT 1;" myapp; then
-              echo "Database connection successful"
+          # Wait for pod to be running (not necessarily ready)
+          for i in {1..30}; do
+            if kubectl get pods -l app=mysql -o jsonpath='{.items[0].status.phase}' | grep -q "Running"; then
+              echo "MySQL pod is running"
               break
-            else
-              echo "Attempt $i/10: Database not ready yet"
-              sleep 5
             fi
+            echo "Waiting for MySQL pod to run... ($i/30)"
+            sleep 5
           done
+          
+          # Wait for pod to be ready with longer timeout
+          kubectl wait --for=condition=ready pod -l app=mysql --timeout=300s
+          
+          # Additional verification
+          echo "MySQL pod details:"
+          kubectl get pods -l app=mysql -o wide
+          echo "MySQL logs (last 20 lines):"
+          kubectl logs -l app=mysql --tail=20
+          
+          # Test connection from within the cluster
+          MYSQL_POD=$(kubectl get pods -l app=mysql -o jsonpath='{.items[0].metadata.name}')
+          echo "Testing MySQL connection from pod $MYSQL_POD..."
+          kubectl exec $MYSQL_POD -- mysql -u root -prootpassword -e "SELECT 1;"
+          
+          echo "MySQL is ready and responsive!"
 
       - name: Set up Flyway
         run: |
