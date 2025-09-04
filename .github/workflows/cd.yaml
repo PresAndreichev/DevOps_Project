@@ -142,23 +142,6 @@ jobs:
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
         run: |
           echo "Applying database migrations..."
-          
-          # Create a simple flyway config without using the file (to avoid envsubst issues)
-          cat > /tmp/flyway.conf << EOF
-          flyway.url=jdbc:mysql://$DB_HOST:$DB_PORT/$DB_NAME?useSSL=false&allowPublicKeyRetrieval=true&connectTimeout=60000&socketTimeout=60000
-          flyway.user=$DB_USER
-          flyway.password=$DB_PASSWORD
-          flyway.locations=filesystem:./sql
-          flyway.schemas=$DB_NAME
-          flyway.connectRetries=3
-          flyway.connectRetriesInterval=3000
-          EOF
-          
-          echo "Using Flyway configuration:"
-          cat /tmp/flyway.conf | sed 's/password=.*/password=******/'
-          
-          # Run Flyway with timeout to prevent hanging
-          timeout 120s flyway -configFiles=/tmp/flyway.conf migrate || \
+          timeout 120s flyway -configFiles=flyway.conf migrate || \
           (echo "Flyway migration failed or timed out"; exit 1)
-          
           echo "Migration completed successfully"
