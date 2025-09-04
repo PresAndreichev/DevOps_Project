@@ -211,7 +211,7 @@ jobs:
             fi
           done
 
-      - name: Apply database migrations with Flyway
+      - name: Apply database migrations with Flyway inside cluster
         env:
           DB_HOST: mysql-service
           DB_PORT: 3306
@@ -219,19 +219,21 @@ jobs:
           DB_USER: myuser
           DB_PASSWORD: ${{ secrets.MYSQL_DATABASE_PASSWORD }}
         run: |
-          echo "Applying database migrations using Docker Flyway..."
-          ls -la sql/*.sql
-          docker run --rm --network=host \
-            -v $(pwd)/sql:/flyway/sql \
-            flyway/flyway:9.22.0 migrate \
+          kubectl run flyway --rm -i --tty --restart=Never \
+            --image=flyway/flyway:9.22.0 \
+            --env DB_HOST=$DB_HOST \
+            --env DB_PORT=$DB_PORT \
+            --env DB_NAME=$DB_NAME \
+            --env DB_USER=$DB_USER \
+            --env DB_PASSWORD=$DB_PASSWORD \
+            -- /flyway/flyway migrate \
             -url="jdbc:mysql://$DB_HOST:$DB_PORT/$DB_NAME?useSSL=false&allowPublicKeyRetrieval=true" \
             -user="$DB_USER" \
             -password="$DB_PASSWORD" \
             -locations="filesystem:/flyway/sql" \
             -baselineOnMigrate=true \
-            -connectRetries=10 
-            
-          echo "Database migrations completed successfully!"
+            -connectRetries=10
+
 
       - name: Verify final deployment
         run: |
