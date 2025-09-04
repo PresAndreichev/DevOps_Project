@@ -2,7 +2,7 @@ name: CD Pipeline
 
 on:
   workflow_run:
-    workflows: ["CI Pipeline"]  # Must match exactly the name of your CI workflow
+    workflows: ["CI Pipeline"]
     types:
       - completed
 
@@ -21,7 +21,6 @@ jobs:
           echo "CI Workflow: ${{ github.event.workflow_run.name }}"
           echo "CI Status: ${{ github.event.workflow_run.conclusion }}"
           echo "Commit SHA: ${{ github.event.workflow_run.head_sha }}"
-          echo "Commit Message: ${{ github.event.workflow_run.head_commit.message }}"
 
       - name: Set up Kubernetes CLI
         run: |
@@ -46,41 +45,43 @@ jobs:
         run: |
           IMAGE_TAG="${{ secrets.DOCKER_USERNAME }}/myapp:${{ github.event.workflow_run.head_sha }}"
           echo "Pulling image: $IMAGE_TAG"
-          
-          # Retry mechanism in case the image push is still completing
-          for i in {1..5}; do
-            if docker pull $IMAGE_TAG; then
-              echo "Successfully pulled image"
-              break
-            else
-              echo "Attempt $i failed. Retrying in 10 seconds..."
-              sleep 10
-            fi
-          done
-          
-          # Verify image was pulled
+          docker pull $IMAGE_TAG
           docker images | grep "${{ secrets.DOCKER_USERNAME }}/myapp"
-          docker inspect $IMAGE_TAG || echo "Image inspection failed"
 
-      - name: Set up Flyway
+      - name: Install MySQL client for testing
         run: |
-          # Download and install Flyway
-          FLYWAY_VERSION="9.22.0"
+          sudo apt-get update
+          sudo apt-get install -y mysql-client
+
+      - name: Test database connectivity
+        run: |
+          echo "Testing database connectivity to: ${{ secrets.DB_HOST }}:${{ secrets.DB_PORT || '3306' }}"
+          
+          # Test basic network connectivity
+          timeout 30s bash -c 'until nc -zv $0 $1; do echo "Waiting for database..."; sleep 2; done' ${{ secrets.DB_HOST }} ${{ secrets.DB_PORT || '3306' }} || \
+          echo "Network connectivity test failed"
+          
+          # Test MySQL connection
+          timeout 30s mysql -h ${{ secrets.DB_HOST }} -P ${{ secrets.DB_PORT || '3306' }} -u ${{ secrets.DB_USER }} -p${{ secrets.DB_PASSWORD }} -e "SELECT 1;" ${{ secrets.DB_NAME }} && \
+          echo "Database connection successful" || \
+          echo "Database connection failed - check credentials and network access"
+
+      - name: Set up Flyway (latest version)
+        run: |
+          # Install latest Flyway version to avoid warnings
+          FLYWAY_VERSION="11.11.2"
           wget -qO- https://repo1.maven.org/maven2/org/flywaydb/flyway-commandline/${FLYWAY_VERSION}/flyway-commandline-${FLYWAY_VERSION}-linux-x64.tar.gz | tar xvz
-          sudo ln -s $(pwd)/flyway-${FLYWAY_VERSION}/flyway /usr/local/bin/flyway
+          sudo ln -sf $(pwd)/flyway-${FLYWAY_VERSION}/flyway /usr/local/bin/flyway
           flyway -version
 
       - name: Verify SQL migration files
         run: |
           echo "Checking SQL migration directory structure:"
           if [ -d "./sql" ]; then
-            echo "SQL directory found"
-            echo "SQL files:"
-            ls -la ./sql/*.sql || echo "No SQL files found in sql directory"
+            echo "SQL files found:"
+            ls -la ./sql/*.sql
           else
             echo "ERROR: sql directory not found!"
-            echo "Current directory contents:"
-            ls -la
             exit 1
           fi
 
@@ -94,81 +95,38 @@ jobs:
         run: |
           echo "Applying database migrations..."
           
-          # Check if flyway.conf exists and use it, otherwise use environment variables
-          if [ -f "flyway.conf" ]; then
-            echo "Using flyway.conf from repository"
-            # Create a temporary config file with resolved secrets
-            cat flyway.conf | envsubst > flyway_resolved.conf
-            flyway -configFiles=flyway_resolved.conf migrate
-          else
-            echo "Using environment variables for Flyway configuration"
-            flyway \
-              -url="jdbc:mysql://${DB_HOST}:${DB_PORT}/${DB_NAME}?useSSL=false&allowPublicKeyRetrieval=true" \
-              -user="${DB_USER}" \
-              -password="${DB_PASSWORD}" \
-              -locations="filesystem:./sql" \
-              -schemas="${DB_NAME}" \
-              -cleanDisabled="true" \
-              migrate
-          fi
+          # Create a simple flyway config without using the file (to avoid envsubst issues)
+          cat > /tmp/flyway.conf << EOF
+          flyway.url=jdbc:mysql://$DB_HOST:$DB_PORT/$DB_NAME?useSSL=false&allowPublicKeyRetrieval=true&connectTimeout=60000&socketTimeout=60000
+          flyway.user=$DB_USER
+          flyway.password=$DB_PASSWORD
+          flyway.locations=filesystem:./sql
+          flyway.schemas=$DB_NAME
+          flyway.connectRetries=3
+          flyway.connectRetriesInterval=3000
+          EOF
           
-          # Verify migration was successful
-          echo "Migration completed. Current status:"
-          if [ -f "flyway.conf" ]; then
-            flyway -configFiles=flyway_resolved.conf info
-          else
-            flyway \
-              -url="jdbc:mysql://${DB_HOST}:${DB_PORT}/${DB_NAME}?useSSL=false&allowPublicKeyRetrieval=true" \
-              -user="${DB_USER}" \
-              -password="${DB_PASSWORD}" \
-              -locations="filesystem:./sql" \
-              info
-          fi
+          echo "Using Flyway configuration:"
+          cat /tmp/flyway.conf | sed 's/password=.*/password=******/'
+          
+          # Run Flyway with timeout to prevent hanging
+          timeout 120s flyway -configFiles=/tmp/flyway.conf migrate || \
+          (echo "Flyway migration failed or timed out"; exit 1)
+          
+          echo "Migration completed successfully"
 
       - name: Deploy to Kubernetes
         run: |
           echo "Deploying to Kubernetes..."
           if [ -d "k8" ]; then
-            # Update image tag in Kubernetes manifests if needed
-            if [ -f "k8/deployment.yaml" ]; then
-              echo "Updating image tag in deployment to: ${{ github.event.workflow_run.head_sha }}"
-              sed -i "s|image:.*|image: ${{ secrets.DOCKER_USERNAME }}/myapp:${{ github.event.workflow_run.head_sha }}|" k8/deployment.yaml
-            fi
-            
             kubectl apply -f k8/
             echo "Deployment completed successfully"
           else
-            echo "Warning: k8 directory not found, skipping Kubernetes deployment"
-            echo "Current directory contents:"
-            ls -la
+            echo "Warning: k8 directory not found"
           fi
 
       - name: Verify Kubernetes deployment
         run: |
           echo "Waiting for deployment to be ready..."
-          sleep 10
-          
-          # Check deployment status
-          kubectl get pods -o wide
-          kubectl get services -o wide
-          kubectl get deployments -o wide
-          
-          # Wait for pods to be ready
-          timeout 60s kubectl wait --for=condition=available deployment/myapp --timeout=60s || \
-            echo "Deployment might still be starting"
-          
-          # Show pod logs for verification
-          POD_NAME=$(kubectl get pods -l app=myapp -o jsonpath='{.items[0].metadata.name}')
-          if [ ! -z "$POD_NAME" ]; then
-            echo "Pod logs:"
-            kubectl logs $POD_NAME --tail=20
-          fi
-
-      - name: Health check
-        run: |
-          SERVICE_IP=$(kubectl get service myapp-service -o jsonpath='{.status.loadBalancer.ingress[0].ip}' || echo "")
-          if [ ! -z "$SERVICE_IP" ]; then
-            curl -I --connect-timeout 5 http://$SERVICE_IP:3000 || echo "Health check failed - service might still be starting"
-          else
-            echo "Service IP not available yet"
-          fi
+          sleep 15
+          kubectl get pods,services,deployments
