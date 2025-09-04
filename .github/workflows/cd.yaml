@@ -34,6 +34,27 @@ jobs:
       - name: Set up kind cluster
         uses: helm/kind-action@v1.7.0
 
+      - name: Verify Docker context
+        run: |
+          docker context ls  # Ensure Docker is using the default context
+          docker info
+
+      - name: Create kind cluster manually
+        run: |
+          kind create cluster --name kind --wait 60s  # Create the kind cluster explicitly
+
+      - name: Wait for the kind cluster to be ready
+        run: |
+          kubectl get nodes || echo "Waiting for nodes..."
+          for i in {1..10}; do
+            if kubectl get nodes | grep -q " Ready "; then
+              echo "Cluster is ready"
+              break
+            fi
+            echo "Waiting for nodes..."
+            sleep 5
+          done
+
       - name: Install kubectl
         uses: azure/setup-kubectl@v3
         with:
