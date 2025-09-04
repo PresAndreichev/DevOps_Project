@@ -109,7 +109,7 @@ jobs:
       - name: Push Docker image to Docker Hub
         run: |
           SOURCE_IMAGE=${{ needs.build_and_test.outputs.image-tag }}
-          TARGET_IMAGE=${{ secrets.DOCKER_USERNAME }}/myapp:latest
+          TARGET_IMAGE=${{ secrets.DOCKER_USERNAME }}/myapp:${{ github.sha }}
 
           echo "Tagging image: $SOURCE_IMAGE as $TARGET_IMAGE"
           docker tag $SOURCE_IMAGE $TARGET_IMAGE
