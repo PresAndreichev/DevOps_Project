@@ -221,9 +221,8 @@ jobs:
           DB_USER: myuser
           DB_PASSWORD: ${{ secrets.MYSQL_DATABASE_PASSWORD }}
         run: |
-          # Run Flyway pod inside the cluster, non-interactive
+          # Run Flyway pod in cluster
           kubectl run flyway \
-            --rm \
             --restart=Never \
             --image=flyway/flyway:9.22.0 \
             --env DB_HOST=$DB_HOST \
@@ -239,6 +238,9 @@ jobs:
               -baselineOnMigrate=true \
               -connectRetries=10
 
+          kubectl wait --for=condition=Succeeded pod/flyway --timeout=300s
+
+          kubectl delete pod flyway || true
 
       - name: Verify final deployment
         run: |
