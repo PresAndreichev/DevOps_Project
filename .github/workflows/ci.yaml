@@ -11,6 +11,8 @@ on:
 jobs:
   build_and_test:
     runs-on: ubuntu-latest
+    outputs:
+      image-tag: ${{ steps.build-docker.outputs.image-tag }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v2
@@ -48,6 +50,7 @@ jobs:
       - name: Build Docker Image
         run: |
           docker build -t myapp:${{ github.sha }} .
+          echo "image-tag=myapp:${{ github.sha }}" >> $GITHUB_OUTPUT
 
   security_tests:
     runs-on: ubuntu-latest
@@ -105,5 +108,5 @@ jobs:
 
       - name: Push Docker image to Docker Hub
         run: |
-          docker tag myapp:${{ github.sha }} ${{ secrets.DOCKER_USERNAME }}/myapp:${{ github.sha }}
+          docker tag ${{ needs.build_and_test.outputs.image-tag }} ${{ secrets.DOCKER_USERNAME }}/myapp:${{ github.sha }}
           docker push ${{ secrets.DOCKER_USERNAME }}/myapp:${{ github.sha }}
