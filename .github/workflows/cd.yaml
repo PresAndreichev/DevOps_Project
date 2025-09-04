@@ -128,54 +128,33 @@ jobs:
           
           echo "MySQL is ready!"
 
-      - name: Set up Flyway
+      - name: Apply database migrations with Flyway (Docker approach)
+        env:
+          DB_HOST: mysql-service
+          DB_PORT: 3306
+          DB_NAME: myapp
+          DB_USER: myuser
+          DB_PASSWORD: mypassword
         run: |
-          # Install Flyway
-          FLYWAY_VERSION="11.11.2"
-          wget -q "https://repo1.maven.org/maven2/org/flywaydb/flyway-commandline/${FLYWAY_VERSION}/flyway-commandline-${FLYWAY_VERSION}-linux-x64.tar.gz"
-          tar -xzf flyway-commandline-${FLYWAY_VERSION}-linux-x64.tar.gz
-          sudo ln -sf $(pwd)/flyway-${FLYWAY_VERSION}/flyway /usr/local/bin/flyway
-          flyway -version
-
-      - name: Verify SQL migration files
-        run: |
-          echo "Checking SQL migration directory structure:"
-          if [ -d "./src" ]; then
-            echo "SQL files found in src folder:"
-            ls -la ./src/*.sql
-          else
-            echo "ERROR: src directory not found!"
-            exit 1
-          fi
-
-      - name: Apply database migrations with Flyway
-        run: |
-          echo "Applying database migrations..."
+          echo "Applying database migrations using Docker Flyway..."
           
-          # Create a flyway config that connects to the in-cluster MySQL service
-          cat > /tmp/flyway.conf << EOF
-          flyway.url=jdbc:mysql://mysql-service:3306/myapp?useSSL=false&allowPublicKeyRetrieval=true
-          flyway.user=myuser
-          flyway.password=mypassword
-          flyway.locations=filesystem:./src
-          flyway.schemas=myapp
-          flyway.cleanDisabled=true
-          flyway.validateOnMigrate=true
-          flyway.outOfOrder=false
-          flyway.baselineOnMigrate=true
-          flyway.driver=com.mysql.cj.jdbc.Driver
-          flyway.connectRetries=10
-          flyway.connectRetriesInterval=3000
-          EOF
+          # Create a temporary directory for SQL files
+          mkdir -p /tmp/sql-migrations
+          cp ./src/*.sql /tmp/sql-migrations/
           
-          echo "Using Flyway configuration:"
-          cat /tmp/flyway.conf | sed 's/password=.*/password=******/'
+          # Run Flyway migration using Docker
+          docker run --rm --network=host \
+            -v /tmp/sql-migrations:/flyway/sql \
+            flyway/flyway:9.22.0 \
+            -url="jdbc:mysql://$DB_HOST:$DB_PORT/$DB_NAME?useSSL=false&allowPublicKeyRetrieval=true" \
+            -user="$DB_USER" \
+            -password="$DB_PASSWORD" \
+            -locations="filesystem:/flyway/sql" \
+            -baselineOnMigrate=true \
+            -connectRetries=10 \
+            migrate
           
-          # Run Flyway with the processed config file
-          timeout 120s flyway -configFiles=/tmp/flyway.conf migrate || \
-          (echo "Flyway migration failed or timed out"; exit 1)
-          
-          echo "Migration completed successfully"
+          echo "Database migrations completed successfully!"
 
       - name: Verify final deployment
         run: |
