@@ -17,11 +17,13 @@ jobs:
           curl -LO https://storage.googleapis.com/kubernetes-release/release/v1.24.0/bin/linux/amd64/kubectl
           chmod +x ./kubectl
           sudo mv ./kubectl /usr/local/bin/kubectl
+          kubectl version --client
 
       - name: Set up Docker CLI
         run: |
           curl -fsSL https://get.docker.com -o get-docker.sh
           sudo sh get-docker.sh
+          docker --version
 
       - name: Login to Docker Hub
         uses: docker/login-action@v2
@@ -32,13 +34,80 @@ jobs:
       - name: Pull Docker image
         run: |
           docker pull ${{ secrets.DOCKER_USERNAME }}/myapp:${{ github.sha }}
+          docker images | grep "${{ secrets.DOCKER_USERNAME }}/myapp"
 
-      - name: Apply Data Migrations
+      - name: Set up Flyway
         run: |
-          mysql -h ${{ secrets.DB_HOST }} -u ${{ secrets.DB_USER }} -p${{ secrets.DB_PASSWORD }} < ./V1__Create_person_table.sql
-          mysql -h ${{ secrets.DB_HOST }} -u ${{ secrets.DB_USER }} -p${{ secrets.DB_PASSWORD }} < ./V2__Add_people.sql
-          mysql -h ${{ secrets.DB_HOST }} -u ${{ secrets.DB_USER }} -p${{ secrets.DB_PASSWORD }} < ./V3__Add_more_people.sql
+          # Download and install Flyway
+          FLYWAY_VERSION="9.22.0"
+          wget -qO- https://repo1.maven.org/maven2/org/flywaydb/flyway-commandline/${FLYWAY_VERSION}/flyway-commandline-${FLYWAY_VERSION}-linux-x64.tar.gz | tar xvz
+          sudo ln -s $(pwd)/flyway-${FLYWAY_VERSION}/flyway /usr/local/bin/flyway
+          flyway -version
+
+      - name: Verify SQL migration files
+        run: |
+          echo "Checking SQL migration directory structure:"
+          ls -la ./sql/ || echo "SQL directory not found - please check your repository structure"
+          
+          if [ -d "./sql" ]; then
+            echo "SQL files found:"
+            ls -la ./sql/*.sql || echo "No SQL files found in sql directory"
+          else
+            echo "ERROR: sql directory not found!"
+            echo "Please make sure you have a 'sql' directory with your migration files"
+            exit 1
+          fi
+
+      - name: Apply database migrations with Flyway
+        env:
+          DB_HOST: ${{ secrets.DB_HOST }}
+          DB_PORT: ${{ secrets.DB_PORT || '3306' }}
+          DB_NAME: ${{ secrets.DB_NAME }}
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+        run: |
+          # Use flyway.conf from repository if it exists, otherwise use environment variables
+          if [ -f "flyway.conf" ]; then
+            echo "Using flyway.conf from repository"
+            flyway -configFiles=flyway.conf migrate
+          else
+            echo "Using environment variables for Flyway configuration"
+            flyway \
+              -url="jdbc:mysql://${DB_HOST}:${DB_PORT}/${DB_NAME}" \
+              -user="${DB_USER}" \
+              -password="${DB_PASSWORD}" \
+              -locations="filesystem:./sql" \
+              -schemas="${DB_NAME}" \
+              migrate
+          fi
+          
+          # Verify migration was successful
+          echo "Migration completed. Current status:"
+          if [ -f "flyway.conf" ]; then
+            flyway -configFiles=flyway.conf info
+          else
+            flyway \
+              -url="jdbc:mysql://${DB_HOST}:${DB_PORT}/${DB_NAME}" \
+              -user="${DB_USER}" \
+              -password="${DB_PASSWORD}" \
+              -locations="filesystem:./sql" \
+              info
+          fi
 
       - name: Deploy to Kubernetes
         run: |
-          kubectl apply -f k8/
+          echo "Deploying to Kubernetes..."
+          if [ -d "k8" ]; then
+            kubectl apply -f k8/
+            echo "Deployment completed successfully"
+          else
+            echo "Warning: k8 directory not found, skipping Kubernetes deployment"
+          fi
+
+      - name: Verify deployment
+        run: |
+          # Wait a moment for pods to start
+          sleep 10
+          kubectl get pods -o wide
+          kubectl get services -o wide
+          kubectl get deployments -o wide
