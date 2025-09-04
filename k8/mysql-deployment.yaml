@@ -4,8 +4,8 @@ metadata:
   name: mysql-secret
 type: Opaque
 data:
-  root-password: cm9vdHBhc3N3b3Jk  # rootpassword
-  database-password: bXlwYXNzd29yZA==  # mypassword
+  root-password: ${MYSQL_ROOT_PASSWORD}
+  database-password: ${MYSQL_DATABASE_PASSWORD}
 ---
 apiVersion: v1
 kind: ConfigMap
