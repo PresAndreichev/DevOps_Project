@@ -5,6 +5,8 @@ on:
     workflows: ["CI Pipeline"]
     types:
       - completed
+    branches:
+      - main
 
 jobs:
   deploy:
@@ -219,7 +221,10 @@ jobs:
           DB_USER: myuser
           DB_PASSWORD: ${{ secrets.MYSQL_DATABASE_PASSWORD }}
         run: |
-          kubectl run flyway --rm -i --tty --restart=Never \
+          # Run Flyway pod inside the cluster, non-interactive
+          kubectl run flyway \
+            --rm \
+            --restart=Never \
             --image=flyway/flyway:9.22.0 \
             --env DB_HOST=$DB_HOST \
             --env DB_PORT=$DB_PORT \
@@ -227,12 +232,12 @@ jobs:
             --env DB_USER=$DB_USER \
             --env DB_PASSWORD=$DB_PASSWORD \
             -- /flyway/flyway migrate \
-            -url="jdbc:mysql://$DB_HOST:$DB_PORT/$DB_NAME?useSSL=false&allowPublicKeyRetrieval=true" \
-            -user="$DB_USER" \
-            -password="$DB_PASSWORD" \
-            -locations="filesystem:/flyway/sql" \
-            -baselineOnMigrate=true \
-            -connectRetries=10
+              -url="jdbc:mysql://$DB_HOST:$DB_PORT/$DB_NAME?useSSL=false&allowPublicKeyRetrieval=true" \
+              -user="$DB_USER" \
+              -password="$DB_PASSWORD" \
+              -locations="filesystem:/flyway/sql" \
+              -baselineOnMigrate=true \
+              -connectRetries=10
 
 
       - name: Verify final deployment
