@@ -72,16 +72,9 @@ jobs:
         run: |
           snyk test
 
-      - name: Install Trivy
+      - name: Run Trivy scan (IAST) using Docker image
         run: |
-          TRIVY_VERSION=$(curl -s https://api.github.com/repos/aquasecurity/trivy/releases/latest | jq -r .tag_name)
-          curl -sSfL "https://github.com/aquasecurity/trivy/releases/download/${TRIVY_VERSION}/trivy_${TRIVY_VERSION#v}_Linux-x86_64.deb" -o trivy.deb
-          sudo dpkg -i trivy.deb
-          rm trivy.deb
-          
-      - name: Run Trivy scan (IAST)
-        run: |
-          trivy image myapp:${{ github.sha }}
+          docker run --rm -v $(pwd):/app -w /app aquasec/trivy:latest image myapp:${{ github.sha }}
 
       - name: Install SonarCloud
         run: |
