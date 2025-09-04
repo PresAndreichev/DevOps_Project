@@ -108,5 +108,6 @@ jobs:
 
       - name: Push Docker image to Docker Hub
         run: |
+          echo "Source image: ${{ needs.build_and_test.outputs.image-tag }}"
           docker tag ${{ needs.build_and_test.outputs.image-tag }} ${{ secrets.DOCKER_USERNAME }}/myapp:${{ github.sha }}
           docker push ${{ secrets.DOCKER_USERNAME }}/myapp:${{ github.sha }}
