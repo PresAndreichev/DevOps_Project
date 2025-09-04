@@ -51,6 +51,7 @@ jobs:
         run: |
           IMAGE_TAG="${{ secrets.DOCKER_USERNAME }}/myapp:${{ github.event.workflow_run.head_sha }}"
           echo "Pulling image: $IMAGE_TAG"
+          docker pull $IMAGE_TAG
           kind load docker-image $IMAGE_TAG
 
       - name: Deploy to Kubernetes
@@ -70,7 +71,7 @@ jobs:
           sleep 20
           kubectl get pods -A
           kubectl get svc -A
-          
+
       - name: Install MySQL client for testing
         run: |
           sudo apt-get update
