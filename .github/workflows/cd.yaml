@@ -211,7 +211,7 @@ jobs:
             fi
           done
 
-      - name: Apply database migrations with Flyway (Docker approach)
+      - name: Apply database migrations with Flyway
         env:
           DB_HOST: mysql-service
           DB_PORT: 3306
@@ -223,14 +223,14 @@ jobs:
           ls -la sql/*.sql
           docker run --rm --network=host \
             -v $(pwd)/sql:/flyway/sql \
-            flyway/flyway:9.22.0 \
-            -url="jdbc:mysql://127.0.0.1:3306/myapp?useSSL=false&allowPublicKeyRetrieval=true"
+            flyway/flyway:9.22.0 migrate \
+            -url="jdbc:mysql://$DB_HOST:$DB_PORT/$DB_NAME?useSSL=false&allowPublicKeyRetrieval=true" \
             -user="$DB_USER" \
             -password="$DB_PASSWORD" \
             -locations="filesystem:/flyway/sql" \
             -baselineOnMigrate=true \
-            -connectRetries=10 \
-            migrate
+            -connectRetries=10 
+            
           echo "Database migrations completed successfully!"
 
       - name: Verify final deployment
