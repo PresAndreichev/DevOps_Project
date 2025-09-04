@@ -10,7 +10,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -35,7 +35,7 @@ jobs:
       - name: Set up kubectl
         uses: azure/setup-kubectl@v3
         with:
-          version: 'latest'
+          version: latest
 
       - name: Verify Kubernetes cluster
         run: |
@@ -44,7 +44,6 @@ jobs:
 
       - name: Create MySQL Secret from GitHub Secrets
         run: |
-          # Create Kubernetes Secret using GitHub Secrets
           kubectl create secret generic mysql-secret \
             --from-literal=root-password="${{ secrets.MYSQL_ROOT_PASSWORD }}" \
             --from-literal=database-password="${{ secrets.MYSQL_DATABASE_PASSWORD }}" \
@@ -54,97 +53,96 @@ jobs:
       - name: Create MySQL ConfigMap
         run: |
           kubectl apply -f - <<'EOF'
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: mysql-config
-data:
-  database: "myapp"
-  user: "myuser"
-EOF
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: mysql-config
+          data:
+            database: "myapp"
+            user: "myuser"
+          EOF
 
       - name: Deploy MySQL
         run: |
           kubectl apply -f - <<'EOF'
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: mysql
-spec:
-  selector:
-    matchLabels:
-      app: mysql
-  template:
-    metadata:
-      labels:
-        app: mysql
-    spec:
-      containers:
-      - name: mysql
-        image: mysql:8.0.33
-        env:
-        - name: MYSQL_ROOT_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: mysql-secret
-              key: root-password
-        - name: MYSQL_DATABASE
-          valueFrom:
-            configMapKeyRef:
-              name: mysql-config
-              key: database
-        - name: MYSQL_USER
-          valueFrom:
-            configMapKeyRef:
-              name: mysql-config
-              key: user
-        - name: MYSQL_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: mysql-secret
-              key: database-password
-        ports:
-        - containerPort: 3306
-        resources:
-          requests:
-            memory: "256Mi"
-            cpu: "100m"
-        volumeMounts:
-        - name: mysql-storage
-          mountPath: /var/lib/mysql
-        readinessProbe:
-          tcpSocket:
-            port: 3306
-          initialDelaySeconds: 15
-          periodSeconds: 5
-          timeoutSeconds: 3
-          failureThreshold: 5
-        livenessProbe:
-          tcpSocket:
-            port: 3306
-          initialDelaySeconds: 30
-          periodSeconds: 10
-      volumes:
-      - name: mysql-storage
-        emptyDir: {}
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: mysql-service
-spec:
-  selector:
-    app: mysql
-  ports:
-  - port: 3306
-    targetPort: 3306
-EOF
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: mysql
+          spec:
+            selector:
+              matchLabels:
+                app: mysql
+            template:
+              metadata:
+                labels:
+                  app: mysql
+              spec:
+                containers:
+                  - name: mysql
+                    image: mysql:8.0.33
+                    env:
+                      - name: MYSQL_ROOT_PASSWORD
+                        valueFrom:
+                          secretKeyRef:
+                            name: mysql-secret
+                            key: root-password
+                      - name: MYSQL_DATABASE
+                        valueFrom:
+                          configMapKeyRef:
+                            name: mysql-config
+                            key: database
+                      - name: MYSQL_USER
+                        valueFrom:
+                          configMapKeyRef:
+                            name: mysql-config
+                            key: user
+                      - name: MYSQL_PASSWORD
+                        valueFrom:
+                          secretKeyRef:
+                            name: mysql-secret
+                            key: database-password
+                    ports:
+                      - containerPort: 3306
+                    resources:
+                      requests:
+                        memory: "256Mi"
+                        cpu: "100m"
+                    volumeMounts:
+                      - name: mysql-storage
+                        mountPath: /var/lib/mysql
+                    readinessProbe:
+                      tcpSocket:
+                        port: 3306
+                      initialDelaySeconds: 15
+                      periodSeconds: 5
+                      timeoutSeconds: 3
+                      failureThreshold: 5
+                    livenessProbe:
+                      tcpSocket:
+                        port: 3306
+                      initialDelaySeconds: 30
+                      periodSeconds: 10
+                volumes:
+                  - name: mysql-storage
+                    emptyDir: {}
+          ---
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: mysql-service
+          spec:
+            selector:
+              app: mysql
+            ports:
+              - port: 3306
+                targetPort: 3306
+          EOF
 
       - name: Wait for MySQL to be ready
         run: |
           echo "Waiting for MySQL pod to be ready..."
-          
-          # First, wait for the pod to be created and running
+
           echo "Waiting for MySQL pod to be created..."
           for i in {1..30}; do
             if kubectl get pods -l app=mysql 2>/dev/null | grep -q "mysql"; then
@@ -158,15 +156,13 @@ EOF
             fi
             sleep 2
           done
-          
-          # Wait for pod to be in Running state
+
           echo "Waiting for MySQL pod to be running..."
           kubectl wait --for=jsonpath='{.status.phase}'=Running pod -l app=mysql --timeout=120s
-          
-          # Wait for readiness with longer timeout
+
           echo "Waiting for MySQL to become ready..."
           kubectl wait --for=condition=ready pod -l app=mysql --timeout=180s
-          
+
           echo "MySQL is ready!"
 
       - name: Login to Docker Hub
@@ -185,7 +181,6 @@ EOF
       - name: Deploy application to Kubernetes
         run: |
           if [ -d "k8" ]; then
-            # Apply all Kubernetes manifests except mysql (to avoid recreating)
             find k8/ -name "*.yaml" -o -name "*.yml" | grep -v mysql | xargs -I {} kubectl apply -f {}
             echo "Application deployment applied."
           else
@@ -205,11 +200,7 @@ EOF
       - name: Test database connectivity within cluster
         run: |
           echo "Testing database connectivity to MySQL service in cluster..."
-          
-          # Get the MySQL pod name
           MYSQL_POD=$(kubectl get pods -l app=mysql -o jsonpath='{.items[0].metadata.name}')
-          
-          # Test MySQL connection using kubectl exec
           for i in {1..10}; do
             if kubectl exec $MYSQL_POD -- mysql -u myuser -p"${{ secrets.MYSQL_DATABASE_PASSWORD }}" -e "SELECT 1;" myapp; then
               echo "Database connection successful"
@@ -229,12 +220,7 @@ EOF
           DB_PASSWORD: ${{ secrets.MYSQL_DATABASE_PASSWORD }}
         run: |
           echo "Applying database migrations using Docker Flyway..."
-          
-          # Verify SQL files exist
-          echo "SQL files to be migrated:"
           ls -la sql/*.sql
-          
-          # Run Flyway migration using Docker - mount the sql directory directly
           docker run --rm --network=host \
             -v $(pwd)/sql:/flyway/sql \
             flyway/flyway:9.22.0 \
@@ -245,7 +231,6 @@ EOF
             -baselineOnMigrate=true \
             -connectRetries=10 \
             migrate
-          
           echo "Database migrations completed successfully!"
 
       - name: Verify final deployment
