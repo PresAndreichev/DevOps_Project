@@ -140,7 +140,7 @@ jobs:
           
           # Create a temporary directory for SQL files
           mkdir -p /tmp/sql-migrations
-          cp ./src/*.sql /tmp/sql-migrations/
+          cp ./sql/*.sql /tmp/sql-migrations/
           
           # Run Flyway migration using Docker
           docker run --rm --network=host \
