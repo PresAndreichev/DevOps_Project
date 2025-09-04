@@ -10,60 +10,46 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
 
-      - name: Display CI workflow information
-        run: |
-          echo "CI Workflow: ${{ github.event.workflow_run.name }}"
-          echo "CI Status: ${{ github.event.workflow_run.conclusion }}"
-          echo "Commit SHA: ${{ github.event.workflow_run.head_sha }}"
+      - name: Set up Docker
+        uses: docker/setup-buildx-action@v3
 
-      - name: Set up Docker CLI
-        run: |
-          curl -fsSL https://get.docker.com -o get-docker.sh
-          sudo sh get-docker.sh
-          docker --version
-
-      - name: Ensure Docker is running
-        run: docker info
-
-      - name: Set up kind cluster
+      - name: Create Kind cluster
         uses: helm/kind-action@v1.7.0
+        with:
+          cluster_name: kind
+          wait: 60s
 
-      - name: Verify Docker context
-        run: |
-          docker context ls  # Ensure Docker is using the default context
-          docker info
-
-      - name: Create kind cluster manually
-        run: |
-          kind create cluster --name kind --wait 60s  # Create the kind cluster explicitly
-
-      - name: Wait for the kind cluster to be ready
-        run: |
-          kubectl get nodes || echo "Waiting for nodes..."
-          for i in {1..10}; do
-            if kubectl get nodes | grep -q " Ready "; then
-              echo "Cluster is ready"
-              break
-            fi
-            echo "Waiting for nodes..."
-            sleep 5
-          done
-
-      - name: Install kubectl
+      - name: Set up kubectl
         uses: azure/setup-kubectl@v3
         with:
           version: 'latest'
 
-      - name: Verify Kubernetes cluster is up
+      - name: Verify Kubernetes cluster
         run: |
           kubectl cluster-info
           kubectl get nodes
+
+      - name: Deploy MySQL to Kubernetes
+        run: |
+          if [ -f "k8/mysql-deployment.yaml" ]; then
+            kubectl apply -f k8/mysql-deployment.yaml
+            echo "MySQL deployment applied."
+          else
+            echo "MySQL deployment file not found, skipping"
+          fi
+
+      - name: Wait for MySQL to be ready
+        run: |
+          echo "Waiting for MySQL pod to be ready..."
+          kubectl wait --for=condition=ready pod -l app=mysql --timeout=120s
+          echo "MySQL is ready!"
 
       - name: Login to Docker Hub
         uses: docker/login-action@v3
@@ -71,77 +57,103 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Pull Docker image
+      - name: Pull and load Docker image
         run: |
           IMAGE_TAG="${{ secrets.DOCKER_USERNAME }}/myapp:${{ github.event.workflow_run.head_sha }}"
           echo "Pulling image: $IMAGE_TAG"
           docker pull $IMAGE_TAG
           kind load docker-image $IMAGE_TAG
 
-      - name: Deploy to Kubernetes
+      - name: Deploy application to Kubernetes
         run: |
-          echo "Deploying to kind cluster..."
           if [ -d "k8" ]; then
-            kubectl apply -f k8/
-            echo "Deployment applied."
+            # Apply all Kubernetes manifests except mysql (to avoid recreating)
+            find k8/ -name "*.yaml" -o -name "*.yml" | grep -v mysql | xargs -I {} kubectl apply -f {}
+            echo "Application deployment applied."
           else
             echo "ERROR: k8 directory not found"
             exit 1
           fi
 
-      - name: Verify Kubernetes deployment
+      - name: Verify deployment
         run: |
-          echo "Waiting for pods to start..."
-          sleep 20
-          kubectl get pods -A
-          kubectl get svc -A
+          kubectl get pods,svc -A
 
       - name: Install MySQL client for testing
         run: |
           sudo apt-get update
           sudo apt-get install -y mysql-client
 
-      - name: Test database connectivity
+      - name: Test database connectivity within cluster
         run: |
-          echo "Testing database connectivity to: ${{ secrets.DB_HOST }}:${{ secrets.DB_PORT || '3306' }}"
+          echo "Testing database connectivity to MySQL service in cluster..."
           
-          # Test basic network connectivity
-          timeout 30s bash -c 'until nc -zv $0 $1; do echo "Waiting for database..."; sleep 2; done' ${{ secrets.DB_HOST }} ${{ secrets.DB_PORT || '3306' }} || \
-          echo "Network connectivity test failed"
+          # Get the MySQL pod name
+          MYSQL_POD=$(kubectl get pods -l app=mysql -o jsonpath='{.items[0].metadata.name}')
           
-          # Test MySQL connection
-          timeout 30s mysql -h ${{ secrets.DB_HOST }} -P ${{ secrets.DB_PORT || '3306' }} -u ${{ secrets.DB_USER }} -p${{ secrets.DB_PASSWORD }} -e "SELECT 1;" ${{ secrets.DB_NAME }} && \
-          echo "Database connection successful" || \
-          echo "Database connection failed - check credentials and network access"
+          # Test MySQL connection using kubectl exec
+          for i in {1..10}; do
+            if kubectl exec $MYSQL_POD -- mysql -h localhost -u myuser -pmypassword -e "SELECT 1;" myapp; then
+              echo "Database connection successful"
+              break
+            else
+              echo "Attempt $i/10: Database not ready yet"
+              sleep 5
+            fi
+          done
 
-      - name: Set up Flyway (latest version)
+      - name: Set up Flyway
         run: |
-          # Install latest Flyway version to avoid warnings
+          # Install Flyway
           FLYWAY_VERSION="11.11.2"
-          wget -qO- https://repo1.maven.org/maven2/org/flywaydb/flyway-commandline/${FLYWAY_VERSION}/flyway-commandline-${FLYWAY_VERSION}-linux-x64.tar.gz | tar xvz
+          wget -q "https://repo1.maven.org/maven2/org/flywaydb/flyway-commandline/${FLYWAY_VERSION}/flyway-commandline-${FLYWAY_VERSION}-linux-x64.tar.gz"
+          tar -xzf flyway-commandline-${FLYWAY_VERSION}-linux-x64.tar.gz
           sudo ln -sf $(pwd)/flyway-${FLYWAY_VERSION}/flyway /usr/local/bin/flyway
           flyway -version
 
       - name: Verify SQL migration files
         run: |
           echo "Checking SQL migration directory structure:"
-          if [ -d "./sql" ]; then
-            echo "SQL files found:"
-            ls -la ./sql/*.sql
+          if [ -d "./src" ]; then
+            echo "SQL files found in src folder:"
+            ls -la ./src/*.sql
           else
-            echo "ERROR: sql directory not found!"
+            echo "ERROR: src directory not found!"
             exit 1
           fi
 
       - name: Apply database migrations with Flyway
-        env:
-          DB_HOST: ${{ secrets.DB_HOST }}
-          DB_PORT: ${{ secrets.DB_PORT || '3306' }}
-          DB_NAME: ${{ secrets.DB_NAME }}
-          DB_USER: ${{ secrets.DB_USER }}
-          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
         run: |
           echo "Applying database migrations..."
-          timeout 120s flyway -configFiles=flyway.conf migrate || \
+          
+          # Create a flyway config that connects to the in-cluster MySQL service
+          cat > /tmp/flyway.conf << EOF
+          flyway.url=jdbc:mysql://mysql-service:3306/myapp?useSSL=false&allowPublicKeyRetrieval=true
+          flyway.user=myuser
+          flyway.password=mypassword
+          flyway.locations=filesystem:./src
+          flyway.schemas=myapp
+          flyway.cleanDisabled=true
+          flyway.validateOnMigrate=true
+          flyway.outOfOrder=false
+          flyway.baselineOnMigrate=true
+          flyway.driver=com.mysql.cj.jdbc.Driver
+          flyway.connectRetries=10
+          flyway.connectRetriesInterval=3000
+          EOF
+          
+          echo "Using Flyway configuration:"
+          cat /tmp/flyway.conf | sed 's/password=.*/password=******/'
+          
+          # Run Flyway with the processed config file
+          timeout 120s flyway -configFiles=/tmp/flyway.conf migrate || \
           (echo "Flyway migration failed or timed out"; exit 1)
+          
           echo "Migration completed successfully"
+
+      - name: Verify final deployment
+        run: |
+          echo "Final deployment status:"
+          kubectl get pods,svc -A
+          echo "Application logs:"
+          kubectl logs deployment/myapp-deployment || echo "Could not get application logs"
