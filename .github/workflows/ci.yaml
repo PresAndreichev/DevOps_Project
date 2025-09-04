@@ -104,11 +104,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v2
 
-      - name: Build Docker Image (again for this job)
+      - name: Build Docker Image (for this job)
         id: build-docker
         run: |
-          docker build -t myapp:${{ github.sha }} .
-          echo "image-tag=myapp:${{ github.sha }}" >> $GITHUB_OUTPUT
+          docker build -t ${{ secrets.DOCKER_USERNAME }}/myapp:${{ github.sha }} .
+          echo "image-tag=${{ secrets.DOCKER_USERNAME }}/myapp:${{ github.sha }}" >> $GITHUB_OUTPUT
 
       - name: Login to Docker Hub
         uses: docker/login-action@v2
@@ -118,12 +118,6 @@ jobs:
 
       - name: Push Docker image to Docker Hub
         run: |
-          SOURCE_IMAGE=${{ steps.build-docker.outputs.image-tag }}
-          TARGET_IMAGE=${{ secrets.DOCKER_USERNAME }}/myapp:${{ github.sha }}
-
-          echo "Tagging image: $SOURCE_IMAGE as $TARGET_IMAGE"
-          docker tag $SOURCE_IMAGE $TARGET_IMAGE
-
-          echo "Pushing image: $TARGET_IMAGE"
-          docker push $TARGET_IMAGE
+          IMAGE_TO_PUSH=${{ steps.build-docker.outputs.image-tag }}
+          docker push $IMAGE_TO_PUSH
    
