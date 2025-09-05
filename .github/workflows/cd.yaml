@@ -228,44 +228,34 @@ jobs:
           DB_PASSWORD: ${{ secrets.MYSQL_DATABASE_PASSWORD }}
         run: |
           kubectl run flyway \
-            --restart=Never \
-            --image=flyway/flyway:9.22.0 \
-            --overrides='
-            {
-              "spec": {
-                "containers": [{
-                  "name": "flyway",
-                  "image": "flyway/flyway:9.22.0",
-                  "env": [
-                    {"name":"DB_HOST","value":"'"$DB_HOST"'"},
-                    {"name":"DB_PORT","value":"'"$DB_PORT"'"},
-                    {"name":"DB_NAME","value":"'"$DB_NAME"'"},
-                    {"name":"DB_USER","value":"'"$DB_USER"'"},
-                    {"name":"DB_PASSWORD","value":"'"$DB_PASSWORD"'"}
-                  ],
-                  "volumeMounts": [{
-                    "mountPath": "/flyway/sql",
-                    "name": "flyway-sql"
-                  }],
-                  "args": [
-                    "migrate",
-                    "-url=jdbc:mysql://'"$DB_HOST"':'"$DB_PORT"'/'"$DB_NAME"'?useSSL=false&allowPublicKeyRetrieval=true",
-                    "-user='"$DB_USER"'",
-                    "-password='"$DB_PASSWORD"'",
-                    "-locations=filesystem:/flyway/sql",
-                    "-baselineOnMigrate=true",
-                    "-connectRetries=10"
-                  ]
-                }],
-                "volumes": [{
-                  "name": "flyway-sql",
-                  "configMap": {"name": "flyway-sql"}
-                }]
-              }
-            }'
+          --restart=Never \
+          --image=flyway/flyway:9.22.0 \
+          --overrides='{
+            "spec": {
+              "volumes": [{"name":"flyway-sql","configMap":{"name":"flyway-sql"}}],
+              "containers": [{
+                "name":"flyway",
+                "image":"flyway/flyway:9.22.0",
+                "volumeMounts":[{"name":"flyway-sql","mountPath":"/flyway/sql"}],
+                "args":[
+                  "migrate",
+                  "-url=jdbc:mysql://mysql-service:3306/myapp?useSSL=false&allowPublicKeyRetrieval=true",
+                  "-user=myuser",
+                  "-password='"${DB_PASSWORD}"'",
+                  "-locations=filesystem:/flyway/sql",
+                  "-baselineOnMigrate=true",
+                  "-connectRetries=10"
+                ]
+              }]
+            }
+          }'
 
-          # Wait for the migration pod to finish
-          kubectl wait --for=condition=Succeeded pod/flyway --timeout=300s
+          kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/flyway --timeout=300s || {
+            echo "Flyway pod did not succeed. Describing and printing logs..."
+            kubectl describe pod flyway || true
+            kubectl logs flyway || true
+            exit 1
+          }
           kubectl delete pod flyway || true
 
       - name: Verify final deployment
