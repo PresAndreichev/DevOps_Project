@@ -204,7 +204,7 @@ jobs:
           echo "Testing database connectivity to MySQL service in cluster..."
           MYSQL_POD=$(kubectl get pods -l app=mysql -o jsonpath='{.items[0].metadata.name}')
           for i in {1..10}; do
-            if kubectl exec $MYSQL_POD -- mysql -h 127.0.0.1 -P 3306 -u myuser -p"${{ secrets.MYSQL_DATABASE_PASSWORD }}" -e "SELECT 1;" myapp; then
+            if kubectl exec $MYSQL_POD -- mysql -h mysql-service -P 3306 -u myuser -p"${{ secrets.MYSQL_DATABASE_PASSWORD }}" -e "SELECT 1;" myapp; then
               echo "Database connection successful"
               break
             else
@@ -264,6 +264,7 @@ jobs:
               }
             }'
 
+          # Wait for the migration pod to finish
           kubectl wait --for=condition=Succeeded pod/flyway --timeout=300s
           kubectl delete pod flyway || true
 
