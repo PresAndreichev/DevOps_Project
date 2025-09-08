@@ -31,7 +31,7 @@ The idea of the project is to set up a CI/CD pipeline for a simple App.
 └── src/
     ├── app.py
     └── app_test.py
-
+```
 ## ⚙️ CI Pipeline (`.github/workflows/ci.yaml`)
 
 Triggered on pushes and pull requests to `main`, `dev`, or `feature/**` branches.
