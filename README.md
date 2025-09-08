@@ -8,12 +8,13 @@ The idea of the project is to set up a CI/CD pipeline for a simple App.
 ---
 
 📂 Project Structure
+```bash
 ├── Dockerfile
 ├── flyway.conf
 ├── requirements.txt
 ├── sonar-project.properties
 │
-├── k8/                       # Kubernetes manifests
+├── k8/                  
 │   ├── deployment.yaml
 │   ├── hpa.yaml
 │   ├── mysql-configmap.yaml
@@ -22,7 +23,7 @@ The idea of the project is to set up a CI/CD pipeline for a simple App.
 │   ├── mysql-service.yaml
 │   └── service.yaml
 │
-├── sql/                      # Flyway SQL migrations
+├── sql/                         
 │   ├── V1__Create_person_table.sql
 │   ├── V2__Add_people.sql
 │   └── V3__Add_more_people.sql
