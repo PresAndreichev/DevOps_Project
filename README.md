@@ -7,26 +7,29 @@ The project includes unit tests, linting/formatting, security scans, container b
 The idea of the project is to set up a CI/CD pipeline for a simple App.
 ---
 
-## 📂 Project Structure
+📂 Project Structure
 ├── Dockerfile
 ├── flyway.conf
-├── k8/ # Kubernetes manifests
-│ ├── deployment.yaml
-│ ├── hpa.yaml
-│ ├── mysql-configmap.yaml
-│ ├── mysql-deployment.yaml
-│ ├── mysql-secret.yaml
-│ ├── mysql-service.yaml
-│ └── service.yaml
 ├── requirements.txt
 ├── sonar-project.properties
-├── sql/ # Flyway SQL migrations
-│ ├── V1__Create_person_table.sql
-│ ├── V2__Add_people.sql
-│ └── V3__Add_more_people.sql
+│
+├── k8/                       # Kubernetes manifests
+│   ├── deployment.yaml
+│   ├── hpa.yaml
+│   ├── mysql-configmap.yaml
+│   ├── mysql-deployment.yaml
+│   ├── mysql-secret.yaml
+│   ├── mysql-service.yaml
+│   └── service.yaml
+│
+├── sql/                      # Flyway SQL migrations
+│   ├── V1__Create_person_table.sql
+│   ├── V2__Add_people.sql
+│   └── V3__Add_more_people.sql
+│
 └── src/
-├── app.py
-└── app_test.py
+    ├── app.py
+    └── app_test.py
 
 ## ⚙️ CI Pipeline (`.github/workflows/ci.yaml`)
 
@@ -68,6 +71,30 @@ NOTE: I wanted to make sure that if we push into main the CD will start after th
 7. Verify final deployment and print logs.
 
 ---
+
+
+## Things which are done only for the testing
+
+What we do with starting the database from the CD
+1. Start the database (MySQL pod + service in the Kind cluster).
+
+2. Load configuration & secrets (ConfigMap + Secret).
+
+3. Wait until the DB is ready.
+
+4. Run Flyway migrations inside Kubernetes (so schema is up-to-date).
+
+5. Deploy your app (which then connects to the migrated DB).
+
+Pros for this type of solution:
+
+1) Test migrations are on the same commit that passed CI.
+2) The database is fresh every run, so Flyway always starts from a clean state → catches migration errors early.
+3) App + DB work together
+
+Cons:
+
+1) !!! Each time i deploy i start a new DB, which will be bad for productions.
 
 ## 🐳 Docker
 
